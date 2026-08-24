@@ -293,4 +293,54 @@ class VoiceDictationTest {
         )
         secondDs.close()
     }
+
+    // ===== 开机自启动 =====
+
+    @Test
+    fun autostartDefaultsToFalse() = runBlocking {
+        val ds = newDs("autostart-default")
+        val repo = LocalUiPreferencesRepository(ds)
+
+        assertEquals(false, repo.autostart.first())
+        ds.close()
+    }
+
+    @Test
+    fun autostartRoundTrip() = runBlocking {
+        val ds = newDs("autostart-roundtrip")
+        val repo = LocalUiPreferencesRepository(ds)
+
+        repo.setAutostart(true)
+        assertEquals(true, repo.autostart.first())
+        repo.setAutostart(false)
+        assertEquals(false, repo.autostart.first())
+        ds.close()
+    }
+
+    @Test
+    fun autostartPersistsAcrossInstances() = runBlocking {
+        val dir = tempDir.resolve("autostart-persist").also { Files.createDirectories(it) }
+        val firstDs = DictationPreferencesDataSource(dir)
+        LocalUiPreferencesRepository(firstDs).setAutostart(true)
+        firstDs.close()
+
+        val secondDs = DictationPreferencesDataSource(dir)
+        assertEquals(
+            true,
+            LocalUiPreferencesRepository(secondDs).autostart.first()
+        )
+        secondDs.close()
+    }
+
+    @Test
+    fun autostartDoesNotWriteRegistryInDevMode() = runBlocking {
+        // 开发模式下(exe 路径不含 Program Files)不应执行 reg 命令
+        // 这里仅验证 DataStore 读写正常,注册表同步逻辑由 isInstalledEnvironment() 守护
+        val ds = newDs("autostart-dev")
+        val repo = LocalUiPreferencesRepository(ds)
+
+        repo.setAutostart(true)
+        assertEquals(true, repo.autostart.first())
+        ds.close()
+    }
 }

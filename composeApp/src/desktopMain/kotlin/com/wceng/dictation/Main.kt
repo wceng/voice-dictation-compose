@@ -53,6 +53,8 @@ fun main() {
     val initialConfig = runBlocking { koin.get<ConfigRepository>().config.first() }
     // 初始主题同理:避免首帧以默认值闪现亮色
     val initialThemeMode = runBlocking { koin.get<UiPreferencesRepository>().themeMode.first() }
+    // 初始自启动状态(用于托盘/热键注册前同步,仅此处阻塞一次)
+    val initialAutostart = runBlocking { koin.get<UiPreferencesRepository>().autostart.first() }
 
     // JNativeHook 原生库随 jar 分发:启动时解压到用户临时目录(永远可写)再加载,
     // 避免安装到 Program Files 后运行时解压到只读的 jar 目录导致启动崩溃。
@@ -152,6 +154,7 @@ fun main() {
         val historyRepo = koinInject<TranscriptionHistoryRepository>()
         val themeRepo = koinInject<UiPreferencesRepository>()
         val themeMode = themeRepo.themeMode.collectAsState(initialThemeMode).value
+        val autostart = themeRepo.autostart.collectAsState(initialAutostart).value
 
         Window(
             onCloseRequest = { windowVisible.value = false },
@@ -172,12 +175,16 @@ fun main() {
                                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
                         },
                         themeMode = themeMode,
+                        autostart = autostart,
                         onToggle = { controller.toggle() },
                         onCancel = { controller.cancelRecording() },
                         onClearHistory = { controller.clearHistory() },
                         onSaveConfig = ::saveConfig,
                         onThemeModeChange = { mode ->
                             appScope.launch { themeRepo.setThemeMode(mode) }
+                        },
+                        onAutostartChange = { enabled ->
+                            appScope.launch { themeRepo.setAutostart(enabled) }
                         }
                     )
                 }

@@ -77,6 +77,15 @@ class DictationPreferencesDataSource(
         store.edit { prefs -> prefs[THEME_KEY] = mode.raw }
     }
 
+    /** 开机自启动偏好;未设置时默认 false(关闭) */
+    val autostart: Flow<Boolean> = store.data.map { prefs ->
+        prefs[AUTOSTART_KEY]?.toBoolean() ?: false
+    }
+
+    suspend fun setAutostart(enabled: Boolean) {
+        store.edit { prefs -> prefs[AUTOSTART_KEY] = enabled.toString() }
+    }
+
     suspend fun setHistory(items: List<HistoryItem>) {
         store.edit { prefs ->
             if (items.isEmpty()) prefs.remove(HISTORY_KEY)
@@ -116,7 +125,9 @@ class DictationPreferencesDataSource(
 
         // UI 偏好键:不参与后端配置的「存储>环境变量>默认值」优先级体系
         const val KEY_UI_THEME = "ui_theme"
+        const val KEY_AUTOSTART = "autostart_enabled"
         private val THEME_KEY = stringPreferencesKey(KEY_UI_THEME)
+        private val AUTOSTART_KEY = stringPreferencesKey(KEY_AUTOSTART)
 
         private val HISTORY_KEY = stringPreferencesKey("transcription_history_json")
 

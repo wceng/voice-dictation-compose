@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -68,11 +69,13 @@ fun DictationApp(
     storageLocation: String,
     formatTimestamp: (Long) -> String,
     themeMode: ThemeMode = ThemeMode.SYSTEM,
+    autostart: Boolean = false,
     onToggle: () -> Unit,
     onCancel: () -> Unit,
     onClearHistory: () -> Unit,
     onSaveConfig: (ConfigUpdate) -> Unit,
-    onThemeModeChange: (ThemeMode) -> Unit = {}
+    onThemeModeChange: (ThemeMode) -> Unit = {},
+    onAutostartChange: (Boolean) -> Unit = {}
 ) {
     var apiKey by remember(config) { mutableStateOf(config?.apiKey.orEmpty()) }
     var baseUrl by remember(config) { mutableStateOf(config?.baseUrl.orEmpty()) }
@@ -174,6 +177,15 @@ fun DictationApp(
                             Text(label, fontSize = 13.sp)
                         }
                     }
+                }
+                // ===== 开机自启动 =====
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("开机自启动", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Switch(checked = autostart, onCheckedChange = onAutostartChange)
                 }
                 Button(onClick = {
                     onSaveConfig(

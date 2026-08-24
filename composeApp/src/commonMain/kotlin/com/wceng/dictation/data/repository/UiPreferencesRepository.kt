@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.Flow
  */
 interface UiPreferencesRepository {
     val themeMode: Flow<ThemeMode>
-
     suspend fun setThemeMode(mode: ThemeMode)
+
+    /** 开机自启动偏好 */
+    val autostart: Flow<Boolean>
+    suspend fun setAutostart(enabled: Boolean)
 }
