@@ -1,0 +1,187 @@
+package com.wceng.dictation
+
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
+import com.wceng.dictation.core.DictationController
+import com.wceng.dictation.core.model.AppConfig
+import com.wceng.dictation.core.model.ConfigSource
+import com.wceng.dictation.core.model.ConfigUpdate
+import com.wceng.dictation.data.repository.ConfigRepository
+import com.wceng.dictation.data.repository.OfflineFirstConfigRepository
+import com.wceng.dictation.data.repository.TranscriptionHistoryRepository
+import com.wceng.dictation.data.repository.UiPreferencesRepository
+import com.wceng.dictation.data.store.DictationPreferencesDataSource
+import com.wceng.dictation.di.NotifierRouter
+import com.wceng.dictation.di.appModules
+import com.wceng.dictation.platform.HotkeyService
+import com.wceng.dictation.platform.SingleInstanceLock
+import com.wceng.dictation.platform.TrayManager
+import com.wceng.dictation.ui.DictationApp
+import com.wceng.dictation.ui.theme.DictationTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.koin.compose.koinInject
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
+import kotlin.system.exitProcess
+
+fun main() {
+    // 单实例保护:开机自启 + 手动双开时避免双热键双录音
+    val lock = SingleInstanceLock()
+    if (!lock.acquire()) {
+        println("[Main] 检测到已有实例在运行,本次启动退出")
+        return
+    }
+
+    // NiA 分层装配改由 Koin 容器持有:数据源 -> 仓库 -> 平台服务 -> 控制器。
+    // 命令式代码(托盘/热键/启动读取)用 koin.get<T>(),组合内用 koinInject<T>()。
+    val koin = startKoin { modules(appModules()) }.koin
+    val dataSource = koin.get<DictationPreferencesDataSource>()
+    val appScope = koin.get<CoroutineScope>()
+
+    val windowVisible = mutableStateOf(true)
+    // 启动日志用初始配置(窗口尚未创建,短暂阻塞无碍;之后全部走 Flow 自动更新)
+    val initialConfig = runBlocking { koin.get<ConfigRepository>().config.first() }
+    // 初始主题同理:避免首帧以默认值闪现亮色
+    val initialThemeMode = runBlocking { koin.get<UiPreferencesRepository>().themeMode.first() }
+
+    // JNativeHook 原生库随 jar 分发:启动时解压到用户临时目录(永远可写)再加载,
+    // 避免安装到 Program Files 后运行时解压到只读的 jar 目录导致启动崩溃。
+    // 开发运行同样走此逻辑,行为一致。
+    runCatching {
+        val dllName = "JNativeHook-2.2.2.x86_64.dll"
+        val target = java.io.File(System.getProperty("java.io.tmpdir"), "voice-dictation-native/$dllName")
+        Thread.currentThread().contextClassLoader
+            .getResourceAsStream("jnativehook/$dllName")?.use { input ->
+                target.parentFile.mkdirs()
+                target.outputStream().use { output -> input.copyTo(output) }
+                System.setProperty("jnativehook.lib.path", target.parentFile.absolutePath)
+            }
+    }
+
+    var tray: TrayManager? = null
+
+    // 控制器从容器解析(其 onNotify 已绑定 NotifierRouter,托盘就绪后 attach 真正接收器)
+    val controller = koin.get<DictationController>()
+
+    fun logConfig(c: AppConfig) {
+        fun src(key: String) = when (c.sources[key]) {
+            ConfigSource.STORE -> "store"
+            ConfigSource.ENV -> "env"
+            else -> "default"
+        }
+        println(
+            "[Config] 模型=${c.model}(${src(OfflineFirstConfigRepository.KEY_MODEL)}) " +
+                "语言=${c.language}(${src(OfflineFirstConfigRepository.KEY_LANG)}) " +
+                "API=${c.baseUrl}(${src(OfflineFirstConfigRepository.KEY_URL)}) " +
+                "Key=${if (c.configured) "已配置" else "未配置"}(${src(OfflineFirstConfigRepository.KEY_API)})"
+        )
+        println("[Config] 存储位置: ${dataSource.storageLocation}")
+    }
+
+    fun exitApp() {
+        println("[Main] 用户退出")
+        runCatching { HotkeyService.unregister() }
+        runCatching { tray?.dispose() }
+        // Koin 关闭时自动调用 AutoCloseable 单例的 close()(含 DataStore 数据源)
+        runCatching { stopKoin() }
+        lock.release()
+        exitProcess(0)
+    }
+
+    tray = TrayManager(
+        onToggle = { controller.toggle() },
+        onCancel = { controller.cancelRecording() },
+        onShowWindow = { windowVisible.value = true },
+        onQuit = ::exitApp
+    )
+
+    // 托盘就绪:接通控制器通知(转发到托盘气泡,同时保留控制台日志)
+    koin.get<NotifierRouter>().attach { title, message, isError ->
+        println("[Notify] $title: $message")
+        tray?.notify(title, message, isError)
+    }
+
+    tray.show()
+    logConfig(initialConfig)
+
+    if (!initialConfig.configured) {
+        tray.notify(
+            "缺少 API Key",
+            "请在主窗口设置中填写",
+            true
+        )
+    }
+
+    // 状态 -> 托盘单向同步
+    appScope.launch {
+        controller.state.collect { tray.setState(it) }
+    }
+
+    HotkeyService.register(
+        HotkeyService(
+            onToggle = { controller.toggle() },
+            onCancel = { controller.cancelRecording() }
+        )
+    )
+    println("快捷键: Ctrl+Shift+Space 开始/停止并转写 | Ctrl+Shift+Backspace 取消录音")
+
+    // 保存后无需手动刷新:仓库 Flow 自动向界面广播新值,这里只做通知与日志
+    fun saveConfig(update: ConfigUpdate) {
+        appScope.launch {
+            val configRepo = koin.get<ConfigRepository>()
+            configRepo.save(update)
+            val fresh = configRepo.config.first()
+            logConfig(fresh)
+            tray.notify("设置已保存", if (fresh.configured) "配置已生效" else "API Key 仍为空", !fresh.configured)
+        }
+    }
+
+    application {
+        // 组合内经 koin-compose 的 koinInject 解析(与命令式 koin.get 指向同一批单例)
+        val configRepo = koinInject<ConfigRepository>()
+        val historyRepo = koinInject<TranscriptionHistoryRepository>()
+        val themeRepo = koinInject<UiPreferencesRepository>()
+        val themeMode = themeRepo.themeMode.collectAsState(initialThemeMode).value
+
+        Window(
+            onCloseRequest = { windowVisible.value = false },
+            visible = windowVisible.value,
+            state = rememberWindowState(width = 520.dp, height = 860.dp),
+            title = "Voice Dictation"
+        ) {
+            DictationTheme(themeMode = themeMode) {
+                // Surface 让窗口背景随 colorScheme.surface 切换(否则暗色下仍是白底)
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    DictationApp(
+                        state = controller.state.collectAsState().value,
+                        history = historyRepo.history.collectAsState(emptyList()).value,
+                        config = configRepo.config.collectAsState(initialConfig).value,
+                        storageLocation = dataSource.storageLocation,
+                        formatTimestamp = { ts ->
+                            java.time.Instant.ofEpochMilli(ts).atZone(java.time.ZoneId.systemDefault())
+                                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                        },
+                        themeMode = themeMode,
+                        onToggle = { controller.toggle() },
+                        onCancel = { controller.cancelRecording() },
+                        onClearHistory = { controller.clearHistory() },
+                        onSaveConfig = ::saveConfig,
+                        onThemeModeChange = { mode ->
+                            appScope.launch { themeRepo.setThemeMode(mode) }
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
