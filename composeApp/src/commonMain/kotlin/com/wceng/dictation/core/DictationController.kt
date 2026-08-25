@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.time.Clock
 
 /**
  * 听写流程控制器(NiA 分层:编排者,不持有业务数据)。
@@ -88,7 +89,7 @@ class DictationController(
                         } else {
                             injector.inject(result.text)
                             historyRepository.record(
-                                HistoryItem(result.text, System.currentTimeMillis(), true)
+                                HistoryItem(result.text, Clock.System.now().toEpochMilliseconds(), true)
                             )
                         }
                     }
