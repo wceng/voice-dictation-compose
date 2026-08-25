@@ -292,6 +292,30 @@ private val modifierKeys = setOf(
 )
 
 /**
+ * 可作主键的白名单:Compose [Key] 常量 -> 规范名(与 HotkeyCombo.SUPPORTED_KEY_NAMES 对齐)。
+ * 刻意不使用 Key.keyCode 数值——Compose 与 AWT/JNativeHook 的键码体系互不相同,
+ * 按常量对象做身份识别、经规范名查表取存储码,从根上消除换算错误。
+ */
+private val supportedKeys: Map<Key, String> = buildMap {
+    put(Key.A, "A"); put(Key.B, "B"); put(Key.C, "C"); put(Key.D, "D"); put(Key.E, "E")
+    put(Key.F, "F"); put(Key.G, "G"); put(Key.H, "H"); put(Key.I, "I"); put(Key.J, "J")
+    put(Key.K, "K"); put(Key.L, "L"); put(Key.M, "M"); put(Key.N, "N"); put(Key.O, "O")
+    put(Key.P, "P"); put(Key.Q, "Q"); put(Key.R, "R"); put(Key.S, "S"); put(Key.T, "T")
+    put(Key.U, "U"); put(Key.V, "V"); put(Key.W, "W"); put(Key.X, "X"); put(Key.Y, "Y")
+    put(Key.Z, "Z")
+    put(Key.Zero, "0"); put(Key.One, "1"); put(Key.Two, "2"); put(Key.Three, "3")
+    put(Key.Four, "4"); put(Key.Five, "5"); put(Key.Six, "6"); put(Key.Seven, "7")
+    put(Key.Eight, "8"); put(Key.Nine, "9")
+    put(Key.F1, "F1"); put(Key.F2, "F2"); put(Key.F3, "F3"); put(Key.F4, "F4")
+    put(Key.F5, "F5"); put(Key.F6, "F6"); put(Key.F7, "F7"); put(Key.F8, "F8")
+    put(Key.F9, "F9"); put(Key.F10, "F10"); put(Key.F11, "F11"); put(Key.F12, "F12")
+    put(Key.Spacebar, "SPACE")
+    put(Key.Backspace, "BACKSPACE")
+    put(Key.Enter, "ENTER")
+    put(Key.Tab, "TAB")
+}
+
+/**
  * 全局热键捕获行:展示当前组合 + 「修改」进入捕获态 + 「默认」恢复出厂。
  * 捕获态下整行持有焦点,Esc 取消、失焦自动取消;
  * 保存回调返回 null 视为成功并退出捕获态,非空作为错误消息内联展示。
@@ -357,23 +381,34 @@ private fun HotkeyCaptureField(
                                 true
                             }
                             else -> {
-                                val mods = buildSet {
-                                    if (event.isCtrlPressed) add(HotkeyModifier.CTRL)
-                                    if (event.isShiftPressed) add(HotkeyModifier.SHIFT)
-                                    if (event.isAltPressed) add(HotkeyModifier.ALT)
-                                    if (event.isMetaPressed) add(HotkeyModifier.META)
-                                }
-                                val combo = HotkeyCombo(mods, key.keyCode.toInt())
-                                val structural = combo.validate()
+                                // 按 Key 常量对象识别主键,经规范名取存储码;
+                                // 不使用 keyCode 数值(Compose 与 AWT 键码体系不同)
+                                val keyName = supportedKeys[key]
                                 when {
-                                    structural != null -> status = structural to true
+                                    keyName == null -> status = "不支持的按键" to true
                                     else -> {
-                                        val err = onSave(combo)
-                                        if (err == null) {
-                                            capturing = false
-                                            status = "已保存" to false
-                                        } else {
-                                            status = err to true
+                                        val mods = buildSet {
+                                            if (event.isCtrlPressed) add(HotkeyModifier.CTRL)
+                                            if (event.isShiftPressed) add(HotkeyModifier.SHIFT)
+                                            if (event.isAltPressed) add(HotkeyModifier.ALT)
+                                            if (event.isMetaPressed) add(HotkeyModifier.META)
+                                        }
+                                        val combo = HotkeyCombo(
+                                            mods,
+                                            HotkeyCombo.SUPPORTED_KEY_NAMES.getValue(keyName)
+                                        )
+                                        val structural = combo.validate()
+                                        when {
+                                            structural != null -> status = structural to true
+                                            else -> {
+                                                val err = onSave(combo)
+                                                if (err == null) {
+                                                    capturing = false
+                                                    status = "已保存" to false
+                                                } else {
+                                                    status = err to true
+                                                }
+                                            }
                                         }
                                     }
                                 }
