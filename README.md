@@ -91,19 +91,25 @@ composeApp/src/
 ├── commonMain/kotlin/com/wceng/dictation/
 │   ├── core/
 │   │   ├── DictationController.kt  # 听写流程编排(IDLE/RECORDING/TRANSCRIBING)
-│   │   ├── Recorder.kt             # 录音器抽象
+│   │   ├── Recorder.kt             # 录音器接口(通用契约,跨平台可复用)
 │   │   ├── WavEncoder.kt           # 纯 Kotlin PCM→WAV 编码
-│   │   ├── Feedback.kt             # 文本注入/提示音抽象
+│   │   ├── Feedback.kt             # TextInjector / SoundFeedback 抽象
 │   │   └── model/                  # 纯模型(AppConfig/HistoryItem/TranscriptionResult/DictationState)
-│   ├── data/                       # 数据层接口(NiA 模式:仓库=单一数据源 SSOT)
+│   ├── data/                       # 数据层接口(NiA:仓库=单一数据源 SSOT)
 │   │   ├── repository/             # ConfigRepository + TranscriptionHistoryRepository + UiPreferencesRepository
 │   │   └── network/                # SttNetworkDataSource
+│   ├── platform/                   # 跨平台服务契约(各平台 realize;commonMain 只依赖接口)
+│   │   ├── AudioDeviceManager.kt   # 麦克风枚举/选择
+│   │   ├── ClipboardManager.kt     # 剪贴板读写
+│   │   ├── NotificationService.kt  # 系统通知
+│   │   ├── AppLifecycle.kt         # 单实例锁/启动参数/退出
+│   │   └── PlatformModule.kt       # expect val platformModule(DI 平台装配点)
 │   └── ui/
 │       ├── DictationApp.kt         # 主窗口界面(跨平台可复用)
 │       └── theme/Theme.kt          # DictationTheme(亮/暗 MaterialTheme 包装)
 └── desktopMain/kotlin/com/wceng/dictation/
     ├── Main.kt                     # 入口:Koin 启动 + 托盘/热键/窗口(命令式 koin.get / 组合内 koinInject)
-    ├── di/AppModule.kt             # Koin 模块:数据源→仓库→平台服务→控制器 + NotifierRouter
+    ├── di/AppModule.kt             # Koin 模块:数据源→仓库→网络→平台→控制器(不含平台绑定)
     ├── data/
     │   ├── store/DictationPreferencesDataSource.kt    # 唯一 DataStore 持有者(原始存取)
     │   ├── repository/OfflineFirstConfigRepository.kt # 配置:store>env>默认值 + 来源标记
@@ -111,29 +117,45 @@ composeApp/src/
     │   ├── repository/LocalUiPreferencesRepository.kt # UI 偏好(外观主题)持久化
     │   └── network/OkHttpSttNetworkDataSource.kt      # OpenAI 兼容转写客户端(含重试)
     └── platform/
+        ├── PlatformModule.kt       # actual val platformModule: 把接口绑到下方 Desktop 实现
         ├── DesktopRecorder.kt      # javax.sound 录音
         ├── DesktopSoundPlayer.kt   # 合成提示音
         ├── DesktopTextInjector.kt  # 剪贴板+Ctrl+V 注入(Robot/xdotool)
-        ├── HotkeyService.kt        # JNativeHook 全局热键
-        ├── TrayManager.kt          # 托盘图标+Swing 菜单
-        └── SingleInstanceLock.kt   # 单实例端口锁
+        ├── DesktopAudioDeviceManager.kt  # Java Sound 麦克风枚举
+        ├── DesktopClipboardManager.kt    # AWT 剪贴板
+        ├── DesktopNotificationService.kt # 托盘气泡通知(attach 后绑定 TrayManager)
+        ├── DesktopAppLifecycle.kt        # TCP 单实例锁 + 命令行参数
+        ├── HotkeyService.kt        # JNativeHook 全局热键(纯桌面)
+        ├── TrayManager.kt          # 托盘图标+Swing 菜单(纯桌面)
+        └── SingleInstanceLock.kt   # 单实例端口锁(由 DesktopAppLifecycle 复用)
 ```
 
+架构说明:commonMain 只声明跨平台服务的**契约接口**与 `expect val platformModule`,
+具体的 `Desktop*` 实现全部位于 desktopMain 的 `platform/`。Koin 通过
+expect/actual 平台模块把这套契约绑定到桌面实现——随后追加 `androidTarget()`/
+iOS 目标时,在各自 sourceSet 提供一个 `actual val platformModule` 并实现接口即可,
+commonMain 的控制器、数据层、UI 零改动。
+
 将来开发手机版:在 `kotlin { }` 中追加 `androidTarget()` / iOS 目标,
-commonMain 的核心逻辑与 UI 无需改动,只需为各平台实现 `Recorder`、
-`TextInjector` 等接口(移动端没有全局热键与跨应用注入,交互形态会不同)。
+只需为各平台提供 `actual val platformModule` + 对应实现(移动端无全局热键与跨应用注入,交互形态会不同)。
 
 ### 依赖注入(Koin)
 
 对象图由 [Koin](https://insert-koin.io/)(支持 Compose Multiplatform)统一装配,
-定义集中在 `di/AppModule.kt`,入口 `startKoin { modules(appModules()) }`:
+入口 `startKoin { modules(appModules()) }`:
 
 - 命令式代码(托盘、热键、启动读取)用 `koin.get<T>()`;组合内用 koin-compose 的 `koinInject<T>()`
-- 接口绑定:`Recorder→DesktopRecorder`、`SttNetworkDataSource→OkHttpSttNetworkDataSource` 等
-- 控制器产生的通知经 `NotifierRouter` 单例转发给托盘(解决"控制器先于托盘创建"的时序)
+- **平台绑定收敛到 `expect val platformModule`**:在 `desktopMain/platform/PlatformModule.kt` 用
+  `actual` 绑定 `Recorder→DesktopRecorder`、`TextInjector→DesktopTextInjector`、
+  `SoundFeedback→DesktopSoundPlayer`、`AudioDeviceManager→DesktopAudioDeviceManager`、
+  `ClipboardManager→DesktopClipboardManager`、`NotificationService→DesktopNotificationService`、
+  `AppLifecycle→DesktopAppLifecycle`
+- 核心三件(录音/注入/提示音)数据层与网络层定义仍在 `di/AppModule.kt`(commonMain 相关的仓库/网络/控制器)
+- 控制器产生的通知经 `NotificationService` 转发给托盘(`Main.kt` 中 `attach` 到 `TrayManager`),
+  解决"控制器先于托盘创建"的时序
 - 退出时 `stopKoin()` 会自动调用 `AutoCloseable` 单例的 `close()`(含 DataStore 数据源)
 
-仍保持手工装配的三处(有意为之):`SingleInstanceLock`(进程级门卫,失败即退出)、
+仍保持手工装配的三处(有意为之,均纯桌面):`SingleInstanceLock`(进程级门卫,失败即退出)、
 `TrayManager`(依赖 compose 可变状态与退出闭包,属 UI 外壳胶水)、
 `HotkeyService.register`(companion 注册模式)。
 

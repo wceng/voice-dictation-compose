@@ -18,8 +18,8 @@ import com.wceng.dictation.data.repository.OfflineFirstConfigRepository
 import com.wceng.dictation.data.repository.TranscriptionHistoryRepository
 import com.wceng.dictation.data.repository.UiPreferencesRepository
 import com.wceng.dictation.data.store.DictationPreferencesDataSource
-import com.wceng.dictation.di.NotifierRouter
 import com.wceng.dictation.di.appModules
+import com.wceng.dictation.platform.DesktopNotificationService
 import com.wceng.dictation.platform.HotkeyService
 import com.wceng.dictation.platform.SingleInstanceLock
 import com.wceng.dictation.platform.TrayManager
@@ -72,7 +72,7 @@ fun main() {
 
     var tray: TrayManager? = null
 
-    // 控制器从容器解析(其 onNotify 已绑定 NotifierRouter,托盘就绪后 attach 真正接收器)
+    // 控制器从容器解析(其 onNotify 已绑定 NotificationService,托盘就绪后 attach 真正接收器)
     val controller = koin.get<DictationController>()
 
     fun logConfig(c: AppConfig) {
@@ -108,7 +108,7 @@ fun main() {
     )
 
     // 托盘就绪:接通控制器通知(转发到托盘气泡,同时保留控制台日志)
-    koin.get<NotifierRouter>().attach { title, message, isError ->
+    koin.get<DesktopNotificationService>().attach { title, message, isError ->
         println("[Notify] $title: $message")
         tray?.notify(title, message, isError)
     }

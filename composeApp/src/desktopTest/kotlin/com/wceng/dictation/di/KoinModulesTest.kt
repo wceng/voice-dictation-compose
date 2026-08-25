@@ -11,8 +11,11 @@ import com.wceng.dictation.data.repository.LocalUiPreferencesRepository
 import com.wceng.dictation.data.repository.OfflineFirstConfigRepository
 import com.wceng.dictation.data.repository.UiPreferencesRepository
 import com.wceng.dictation.data.store.DictationPreferencesDataSource
-import com.wceng.dictation.di.NotifierRouter
 import com.wceng.dictation.di.appModules
+import com.wceng.dictation.platform.AudioDeviceManager
+import com.wceng.dictation.platform.AppLifecycle
+import com.wceng.dictation.platform.ClipboardManager
+import com.wceng.dictation.platform.NotificationService
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -53,7 +56,16 @@ class KoinModulesTest {
             assertNotNull(koin.get<TextInjector>())
             assertNotNull(koin.get<SoundFeedback>())
             assertNotNull(koin.get<DictationController>())
-            assertNotNull(koin.get<NotifierRouter>())
+            assertNotNull(koin.get<NotificationService>())
+            // 具体类也必须可解析(Main.kt 用 koin.get<DesktopNotificationService>().attach 桥接托盘)
+            assertNotNull(koin.get<com.wceng.dictation.platform.DesktopNotificationService>())
+            assertSame(
+                koin.get<NotificationService>(),
+                koin.get<com.wceng.dictation.platform.DesktopNotificationService>()
+            )
+            assertNotNull(koin.get<AudioDeviceManager>())
+            assertNotNull(koin.get<ClipboardManager>())
+            assertNotNull(koin.get<AppLifecycle>())
             // UI 偏好仓库走同一数据源
             assertTrue(koin.get<UiPreferencesRepository>() is LocalUiPreferencesRepository)
         } finally {
@@ -80,7 +92,7 @@ class KoinModulesTest {
         val koin = startKoin { modules(appModules(newDir("singleton"))) }.koin
         try {
             assertSame(koin.get<DictationController>(), koin.get<DictationController>())
-            assertSame(koin.get<NotifierRouter>(), koin.get<NotifierRouter>())
+            assertSame(koin.get<NotificationService>(), koin.get<NotificationService>())
             assertSame(koin.get<DictationPreferencesDataSource>(), koin.get<DictationPreferencesDataSource>())
         } finally {
             stopKoin()
