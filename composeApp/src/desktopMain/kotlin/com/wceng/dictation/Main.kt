@@ -2,6 +2,7 @@ package com.wceng.dictation
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -33,6 +34,8 @@ import kotlinx.coroutines.runBlocking
 import org.koin.compose.koinInject
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
+import java.util.concurrent.atomic.AtomicReference
+import javax.swing.SwingUtilities
 import kotlin.system.exitProcess
 
 fun main() {
@@ -40,10 +43,34 @@ fun main() {
     // JVM 吊成僵尸(托盘在、界面死、占着单实例锁),任何未捕获异常直接退出
     CrashGuard.install()
 
-    // 单实例保护:开机自启 + 手动双开时避免双热键双录音
-    val lock = SingleInstanceLock()
+    // 主窗口可见性与 AWT 窗口引用:先于单实例锁声明,供唤起命令回调使用
+    val windowVisible = mutableStateOf(true)
+    val awtWindowRef = AtomicReference<java.awt.Frame?>(null)
+
+    /** 显示并前置主窗口(托盘菜单、二次启动唤起共用同一入口) */
+    fun showMainWindow() {
+        windowVisible.value = true
+        awtWindowRef.get()?.let { w ->
+            SwingUtilities.invokeLater {
+                w.isVisible = true
+                // 从最小化还原:清除 ICONIFIED 标志位
+                w.extendedState = w.extendedState and java.awt.Frame.ICONIFIED.inv()
+                w.toFront()
+                w.requestFocusInWindow()
+            }
+        }
+    }
+
+    // 单实例保护:第二实例不再静默退出,而是经 TCP 命令通道请求第一实例唤起主窗口
+    val lock = SingleInstanceLock { command ->
+        if (command == SingleInstanceLock.CMD_SHOW) showMainWindow()
+    }
     if (!lock.acquire()) {
-        println("[Main] 检测到已有实例在运行,本次启动退出")
+        val sent = SingleInstanceLock.sendCommand(SingleInstanceLock.CMD_SHOW)
+        println(
+            "[Main] 检测到已有实例在运行," +
+                if (sent) "已请求其显示主窗口,本次启动退出" else "唤起请求发送失败,本次启动退出"
+        )
         return
     }
 
@@ -53,7 +80,6 @@ fun main() {
     val dataSource = koin.get<DictationPreferencesDataSource>()
     val appScope = koin.get<CoroutineScope>()
 
-    val windowVisible = mutableStateOf(true)
     // 启动日志用初始配置(窗口尚未创建,短暂阻塞无碍;之后全部走 Flow 自动更新)
     val initialConfig = runBlocking { koin.get<ConfigRepository>().config.first() }
     // 初始主题同理:避免首帧以默认值闪现亮色
@@ -108,7 +134,7 @@ fun main() {
     tray = TrayManager(
         onToggle = { controller.toggle() },
         onCancel = { controller.cancelRecording() },
-        onShowWindow = { windowVisible.value = true },
+        onShowWindow = ::showMainWindow,
         onQuit = ::exitApp
     )
 
@@ -167,6 +193,8 @@ fun main() {
             state = rememberWindowState(width = 520.dp, height = 860.dp),
             title = "Voice Dictation"
         ) {
+            // 记录 AWT 窗口引用:二次启动唤起时用于还原/前置窗口
+            SideEffect { awtWindowRef.set(window) }
             DictationTheme(themeMode = themeMode) {
                 // Surface 让窗口背景随 colorScheme.surface 切换(否则暗色下仍是白底)
                 Surface(modifier = Modifier.fillMaxSize()) {
