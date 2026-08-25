@@ -1,6 +1,7 @@
 package com.wceng.dictation.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -303,22 +304,40 @@ private fun HotkeyCaptureField(
     onSave: (HotkeyCombo) -> String?
 ) {
     var capturing by remember { mutableStateOf(false) }
+    // 本次捕获期间子树是否已实际持有过焦点(防止进入瞬态误判为失焦)
+    var focusSeen by remember { mutableStateOf(false) }
     // (消息, 是否错误);null 表示无状态行
     var status by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val focusRequester = remember { FocusRequester() }
 
     LaunchedEffect(capturing) {
-        if (capturing) focusRequester.requestFocus()
+        if (capturing) {
+            focusSeen = false
+            focusRequester.requestFocus()
+        }
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = if (capturing) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
+            )
             .focusRequester(focusRequester)
             .onFocusChanged { state ->
-                if (!state.isFocused && capturing) {
+                // 不能用 isFocused 判断失焦:点击行内按钮后焦点在子孙节点上,
+                // 列会收到瞬时的 isFocused=false,导致刚进捕获态就被取消。
+                // 正确语义:整棵子树彻底无焦点(hasFocus=false)、且本捕获期间
+                // 确实持有过焦点之后,才视为用户主动离开。
+                if (!capturing) return@onFocusChanged
+                if (state.hasFocus) {
+                    focusSeen = true
+                } else if (focusSeen) {
                     capturing = false
                     status = null
+                    focusSeen = false
                 }
             }
             .focusable()
