@@ -14,6 +14,7 @@ import com.wceng.dictation.core.DictationController
 import com.wceng.dictation.core.model.AppConfig
 import com.wceng.dictation.core.model.ConfigSource
 import com.wceng.dictation.core.model.ConfigUpdate
+import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.data.repository.ConfigRepository
 import com.wceng.dictation.data.repository.OfflineFirstConfigRepository
 import com.wceng.dictation.data.repository.TranscriptionHistoryRepository
@@ -96,6 +97,8 @@ fun main() {
     val initialThemeMode = runBlocking { koin.get<UiPreferencesRepository>().themeMode.first() }
     // 初始自启动状态(用于托盘/热键注册前同步,仅此处阻塞一次)
     val initialAutostart = runBlocking { koin.get<UiPreferencesRepository>().autostart.first() }
+    // 初始全局热键(注册钩子前读取,避免默认值覆盖用户自定义)
+    val initialHotkeys = runBlocking { koin.get<UiPreferencesRepository>().hotkeys.first() }
 
     // JNativeHook 原生库随 jar 分发:启动时解压到用户临时目录(永远可写)再加载,
     // 避免安装到 Program Files 后运行时解压到只读的 jar 目录导致启动崩溃。
@@ -170,13 +173,21 @@ fun main() {
         controller.state.collect { tray.setState(it) }
     }
 
-    HotkeyService.register(
-        HotkeyService(
-            onToggle = { controller.toggle() },
-            onCancel = { controller.cancelRecording() }
-        )
+    val hotkeyService = HotkeyService(
+        initialHotkeys,
+        onToggle = { controller.toggle() },
+        onCancel = { controller.cancelRecording() }
     )
-    println("快捷键: Ctrl+Shift+Space 开始/停止并转写 | Ctrl+Shift+Backspace 取消录音")
+    HotkeyService.register(hotkeyService)
+    println("[Main] 快捷键: ${initialHotkeys.toggle.displayText()} 开始/停止并转写 | ${initialHotkeys.cancel.displayText()} 取消录音")
+
+    // 设置页改键即时生效:收集仓库热键流,原子替换钩子绑定
+    appScope.launch {
+        koin.get<UiPreferencesRepository>().hotkeys.collect { config ->
+            hotkeyService.updateBindings(config)
+            println("[Main] 热键已更新: ${config.toggle.displayText()} / ${config.cancel.displayText()}")
+        }
+    }
 
     // 保存后无需手动刷新:仓库 Flow 自动向界面广播新值,这里只做通知与日志
     fun saveConfig(update: ConfigUpdate) {
@@ -196,6 +207,14 @@ fun main() {
         val themeRepo = koinInject<UiPreferencesRepository>()
         val themeMode = themeRepo.themeMode.collectAsState(initialThemeMode).value
         val autostart = themeRepo.autostart.collectAsState(initialAutostart).value
+        val hotkeys = themeRepo.hotkeys.collectAsState(initialHotkeys).value
+
+        // 同步校验热键供捕获框内联提示;合法则启动保存协程并返回 null
+        fun hotkeyErrorOrNull(combo: HotkeyCombo, conflicting: HotkeyCombo?): String? {
+            combo.validate()?.let { return it }
+            if (conflicting != null && combo == conflicting) return "与另一组热键相同"
+            return null
+        }
 
         Window(
             onCloseRequest = { windowVisible.value = false },
@@ -219,6 +238,7 @@ fun main() {
                         },
                         themeMode = themeMode,
                         autostart = autostart,
+                        hotkeys = hotkeys,
                         onToggle = { controller.toggle() },
                         onCancel = { controller.cancelRecording() },
                         onClearHistory = { controller.clearHistory() },
@@ -228,6 +248,18 @@ fun main() {
                         },
                         onAutostartChange = { enabled ->
                             appScope.launch { themeRepo.setAutostart(enabled) }
+                        },
+                        onSaveToggleHotkey = { combo ->
+                            hotkeyErrorOrNull(combo, hotkeys.cancel) ?: run {
+                                appScope.launch { runCatching { themeRepo.setToggleHotkey(combo) } }
+                                null
+                            }
+                        },
+                        onSaveCancelHotkey = { combo ->
+                            hotkeyErrorOrNull(combo, hotkeys.toggle) ?: run {
+                                appScope.launch { runCatching { themeRepo.setCancelHotkey(combo) } }
+                                null
+                            }
                         }
                     )
                 }

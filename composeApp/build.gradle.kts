@@ -87,7 +87,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "VoiceDictation"
-            packageVersion = "1.0.14"
+            packageVersion = "1.0.15"
 
             includeAllModules = true
 

@@ -2,6 +2,7 @@ package com.wceng.dictation.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -28,13 +30,26 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -43,6 +58,9 @@ import com.wceng.dictation.core.model.AppConfig
 import com.wceng.dictation.core.model.ConfigUpdate
 import com.wceng.dictation.core.model.DictationState
 import com.wceng.dictation.core.model.HistoryItem
+import com.wceng.dictation.core.model.HotkeyCombo
+import com.wceng.dictation.core.model.HotkeyConfig
+import com.wceng.dictation.core.model.HotkeyModifier
 import com.wceng.dictation.core.model.ThemeMode
 
 private val statusColor = mapOf(
@@ -70,12 +88,16 @@ fun DictationApp(
     formatTimestamp: (Long) -> String,
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     autostart: Boolean = false,
+    hotkeys: HotkeyConfig = HotkeyConfig.DEFAULTS,
     onToggle: () -> Unit,
     onCancel: () -> Unit,
     onClearHistory: () -> Unit,
     onSaveConfig: (ConfigUpdate) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit = {},
-    onAutostartChange: (Boolean) -> Unit = {}
+    onAutostartChange: (Boolean) -> Unit = {},
+    /** 返回 null 表示受理成功;非空为内联展示的错误消息 */
+    onSaveToggleHotkey: (HotkeyCombo) -> String? = { null },
+    onSaveCancelHotkey: (HotkeyCombo) -> String? = { null }
 ) {
     var apiKey by remember(config) { mutableStateOf(config?.apiKey.orEmpty()) }
     var baseUrl by remember(config) { mutableStateOf(config?.baseUrl.orEmpty()) }
@@ -121,7 +143,7 @@ fun DictationApp(
             }
         }
         Text(
-            "快捷键: Ctrl+Shift+Space 开始/停止 · Ctrl+Shift+Backspace 取消",
+            "快捷键: ${hotkeys.toggle.displayText()} 开始/停止 · ${hotkeys.cancel.displayText()} 取消",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -187,6 +209,20 @@ fun DictationApp(
                     Text("开机自启动", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Switch(checked = autostart, onCheckedChange = onAutostartChange)
                 }
+                // ===== 全局热键 =====
+                Text("全局热键", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                HotkeyCaptureField(
+                    label = "开始 / 停止并转写",
+                    current = hotkeys.toggle,
+                    defaultCombo = HotkeyConfig.DEFAULTS.toggle,
+                    onSave = onSaveToggleHotkey
+                )
+                HotkeyCaptureField(
+                    label = "取消录音",
+                    current = hotkeys.cancel,
+                    defaultCombo = HotkeyConfig.DEFAULTS.cancel,
+                    onSave = onSaveCancelHotkey
+                )
                 Button(onClick = {
                     onSaveConfig(
                         ConfigUpdate(
@@ -242,6 +278,138 @@ fun DictationApp(
                     }
                 }
             }
+        }
+    }
+}
+
+/** 纯修饰键(按下后还需主键才能构成组合) */
+private val modifierKeys = setOf(
+    Key.CtrlLeft, Key.CtrlRight,
+    Key.ShiftLeft, Key.ShiftRight,
+    Key.AltLeft, Key.AltRight,
+    Key.MetaLeft, Key.MetaRight
+)
+
+/**
+ * 全局热键捕获行:展示当前组合 + 「修改」进入捕获态 + 「默认」恢复出厂。
+ * 捕获态下整行持有焦点,Esc 取消、失焦自动取消;
+ * 保存回调返回 null 视为成功并退出捕获态,非空作为错误消息内联展示。
+ */
+@Composable
+private fun HotkeyCaptureField(
+    label: String,
+    current: HotkeyCombo,
+    defaultCombo: HotkeyCombo,
+    onSave: (HotkeyCombo) -> String?
+) {
+    var capturing by remember { mutableStateOf(false) }
+    // (消息, 是否错误);null 表示无状态行
+    var status by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(capturing) {
+        if (capturing) focusRequester.requestFocus()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester)
+            .onFocusChanged { state ->
+                if (!state.isFocused && capturing) {
+                    capturing = false
+                    status = null
+                }
+            }
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (!capturing) return@onPreviewKeyEvent false
+                when (event.type) {
+                    KeyEventType.KeyDown -> {
+                        val key = event.key
+                        when {
+                            key == Key.Escape -> {
+                                capturing = false
+                                status = null
+                                true
+                            }
+                            key in modifierKeys -> {
+                                status = "已捕获修饰键,请再按主键" to false
+                                true
+                            }
+                            else -> {
+                                val mods = buildSet {
+                                    if (event.isCtrlPressed) add(HotkeyModifier.CTRL)
+                                    if (event.isShiftPressed) add(HotkeyModifier.SHIFT)
+                                    if (event.isAltPressed) add(HotkeyModifier.ALT)
+                                    if (event.isMetaPressed) add(HotkeyModifier.META)
+                                }
+                                val combo = HotkeyCombo(mods, key.keyCode.toInt())
+                                val structural = combo.validate()
+                                when {
+                                    structural != null -> status = structural to true
+                                    else -> {
+                                        val err = onSave(combo)
+                                        if (err == null) {
+                                            capturing = false
+                                            status = "已保存" to false
+                                        } else {
+                                            status = err to true
+                                        }
+                                    }
+                                }
+                                true
+                            }
+                        }
+                    }
+                    // 吞掉对应抬起事件,避免泄漏给窗口其他组件
+                    KeyEventType.KeyUp -> true
+                    else -> false
+                }
+            }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(current.displayText(), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            }
+            OutlinedButton(
+                onClick = {
+                    if (capturing) {
+                        capturing = false
+                        status = null
+                    } else {
+                        capturing = true
+                        status = null
+                    }
+                },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+            ) {
+                Text(if (capturing) "取消" else "修改", fontSize = 13.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "默认",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable {
+                    val err = onSave(defaultCombo)
+                    status = if (err == null) "已恢复默认" to false else err to true
+                    if (err == null) capturing = false
+                }
+            )
+        }
+        if (capturing || status != null) {
+            val (text, isError) = status ?: ("请按下新的组合键(Esc 取消)" to false)
+            Text(
+                text,
+                fontSize = 11.sp,
+                color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
         }
     }
 }

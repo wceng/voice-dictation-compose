@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.wceng.dictation.core.model.HistoryItem
+import com.wceng.dictation.core.model.HotkeyCombo
+import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +88,26 @@ class DictationPreferencesDataSource(
         store.edit { prefs -> prefs[AUTOSTART_KEY] = enabled.toString() }
     }
 
+    /** 开始/停止转写全局热键;未设置或存储值非法时回退出厂默认 */
+    val hotkeyToggle: Flow<HotkeyCombo> = store.data.map { prefs ->
+        prefs[HOTKEY_TOGGLE_KEY]?.let(HotkeyCombo::parseOrNull)
+            ?: HotkeyConfig.DEFAULTS.toggle
+    }
+
+    suspend fun setHotkeyToggle(combo: HotkeyCombo) {
+        store.edit { prefs -> prefs[HOTKEY_TOGGLE_KEY] = combo.canonical() }
+    }
+
+    /** 取消录音全局热键;未设置或存储值非法时回退出厂默认 */
+    val hotkeyCancel: Flow<HotkeyCombo> = store.data.map { prefs ->
+        prefs[HOTKEY_CANCEL_KEY]?.let(HotkeyCombo::parseOrNull)
+            ?: HotkeyConfig.DEFAULTS.cancel
+    }
+
+    suspend fun setHotkeyCancel(combo: HotkeyCombo) {
+        store.edit { prefs -> prefs[HOTKEY_CANCEL_KEY] = combo.canonical() }
+    }
+
     suspend fun setHistory(items: List<HistoryItem>) {
         store.edit { prefs ->
             if (items.isEmpty()) prefs.remove(HISTORY_KEY)
@@ -126,8 +148,12 @@ class DictationPreferencesDataSource(
         // UI 偏好键:不参与后端配置的「存储>环境变量>默认值」优先级体系
         const val KEY_UI_THEME = "ui_theme"
         const val KEY_AUTOSTART = "autostart_enabled"
+        const val KEY_HOTKEY_TOGGLE = "hotkey_toggle"
+        const val KEY_HOTKEY_CANCEL = "hotkey_cancel"
         private val THEME_KEY = stringPreferencesKey(KEY_UI_THEME)
         private val AUTOSTART_KEY = stringPreferencesKey(KEY_AUTOSTART)
+        private val HOTKEY_TOGGLE_KEY = stringPreferencesKey(KEY_HOTKEY_TOGGLE)
+        private val HOTKEY_CANCEL_KEY = stringPreferencesKey(KEY_HOTKEY_CANCEL)
 
         private val HISTORY_KEY = stringPreferencesKey("transcription_history_json")
 

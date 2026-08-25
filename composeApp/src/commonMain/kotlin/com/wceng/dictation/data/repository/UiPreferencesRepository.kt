@@ -1,5 +1,7 @@
 package com.wceng.dictation.data.repository
 
+import com.wceng.dictation.core.model.HotkeyCombo
+import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
 import kotlinx.coroutines.flow.Flow
 
@@ -14,4 +16,9 @@ interface UiPreferencesRepository {
     /** 开机自启动偏好 */
     val autostart: Flow<Boolean>
     suspend fun setAutostart(enabled: Boolean)
+
+    /** 全局热键配置对(开始/停止 与 取消) */
+    val hotkeys: Flow<HotkeyConfig>
+    suspend fun setToggleHotkey(combo: HotkeyCombo)
+    suspend fun setCancelHotkey(combo: HotkeyCombo)
 }

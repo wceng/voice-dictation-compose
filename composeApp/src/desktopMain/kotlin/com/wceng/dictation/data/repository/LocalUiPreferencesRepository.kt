@@ -1,8 +1,11 @@
 package com.wceng.dictation.data.repository
 
+import com.wceng.dictation.core.model.HotkeyCombo
+import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
 import com.wceng.dictation.data.store.DictationPreferencesDataSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
@@ -26,6 +29,22 @@ class LocalUiPreferencesRepository(
         dataSource.setAutostart(enabled)
         // 仅在已安装环境同步 HKCU Run
         if (isInstalledEnvironment()) syncRegistryRun(enabled)
+    }
+
+    override val hotkeys: Flow<HotkeyConfig> = combine(
+        dataSource.hotkeyToggle,
+        dataSource.hotkeyCancel,
+        ::HotkeyConfig
+    ).distinctUntilChanged()
+
+    override suspend fun setToggleHotkey(combo: HotkeyCombo) {
+        combo.validate()?.let { throw IllegalArgumentException(it) }
+        dataSource.setHotkeyToggle(combo)
+    }
+
+    override suspend fun setCancelHotkey(combo: HotkeyCombo) {
+        combo.validate()?.let { throw IllegalArgumentException(it) }
+        dataSource.setHotkeyCancel(combo)
     }
 
     /** 运行时动态判断:是否为 jpackage 安装版(exe 在 Program Files) */
