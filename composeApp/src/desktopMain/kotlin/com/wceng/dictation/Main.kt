@@ -55,8 +55,18 @@ fun main() {
                 w.isVisible = true
                 // 从最小化还原:清除 ICONIFIED 标志位
                 w.extendedState = w.extendedState and java.awt.Frame.ICONIFIED.inv()
+                // Windows 前台锁:后台进程直接 SetForegroundWindow 会被拒。
+                // 模拟一次 ALT 键击让系统视为"有近期用户输入",再配合
+                // alwaysOnTop 短暂置顶,确保窗口真正到最前并拿到焦点。
+                runCatching {
+                    val robot = java.awt.Robot()
+                    robot.keyPress(java.awt.event.KeyEvent.VK_ALT)
+                    robot.keyRelease(java.awt.event.KeyEvent.VK_ALT)
+                }
+                runCatching { w.isAlwaysOnTop = true }
                 w.toFront()
                 w.requestFocusInWindow()
+                runCatching { w.isAlwaysOnTop = false }
             }
         }
     }
