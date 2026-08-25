@@ -19,6 +19,7 @@ import com.wceng.dictation.data.repository.TranscriptionHistoryRepository
 import com.wceng.dictation.data.repository.UiPreferencesRepository
 import com.wceng.dictation.data.store.DictationPreferencesDataSource
 import com.wceng.dictation.di.appModules
+import com.wceng.dictation.platform.CrashGuard
 import com.wceng.dictation.platform.DesktopNotificationService
 import com.wceng.dictation.platform.HotkeyService
 import com.wceng.dictation.platform.SingleInstanceLock
@@ -35,6 +36,10 @@ import org.koin.core.context.stopKoin
 import kotlin.system.exitProcess
 
 fun main() {
+    // 崩溃 fail-fast:必须最先安装——托盘/AWT 的非守护线程会把主线程崩溃后的
+    // JVM 吊成僵尸(托盘在、界面死、占着单实例锁),任何未捕获异常直接退出
+    CrashGuard.install()
+
     // 单实例保护:开机自启 + 手动双开时避免双热键双录音
     val lock = SingleInstanceLock()
     if (!lock.acquire()) {

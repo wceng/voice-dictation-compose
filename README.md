@@ -125,6 +125,7 @@ composeApp/src/
         ├── DesktopClipboardManager.kt    # AWT 剪贴板
         ├── DesktopNotificationService.kt # 托盘气泡通知(attach 后绑定 TrayManager)
         ├── DesktopAppLifecycle.kt        # TCP 单实例锁 + 命令行参数
+        ├── CrashGuard.kt           # 崩溃 fail-fast(未捕获异常直接退出,防僵尸进程)
         ├── HotkeyService.kt        # JNativeHook 全局热键(纯桌面)
         ├── TrayManager.kt          # 托盘图标+Swing 菜单(纯桌面)
         └── SingleInstanceLock.kt   # 单实例端口锁(由 DesktopAppLifecycle 复用)
@@ -161,6 +162,8 @@ commonMain 的控制器、数据层、UI 零改动。
 
 ## 已知差异与注意事项
 
+- **崩溃 fail-fast**:任何线程的未捕获异常都会让进程立即退出(`CrashGuard`,main 最先安装)。
+  这是刻意的——托盘/AWT 非守护线程会把崩溃后的 JVM 吊成"托盘在、界面死"的僵尸实例并占用单实例锁,干净退出优于半死状态
 - Linux 文本注入依赖 X11 + xdotool;Wayland 下不可用
 - 托盘菜单中文用 Swing 渲染(AWT native 菜单在部分 JDK 上中文显示为方块)
 - 控制台中文日志在某些 JDK 下可能乱码,不影响功能
