@@ -52,13 +52,14 @@ class HotkeyMappingTest {
     }
 
     @Test
-    fun `letters and digits pass through with same numeric value`() {
+    fun `letters and digits map to scan-code based VCs`() {
+        // JNativeHook 的字母/数字是 Set-1 扫描码(HID): K=37、7=8,绝非 ASCII
         val combo = HotkeyCombo.parseOrNull("CTRL+ALT+K")!!
         val keys = HotkeyService.nativeKeysOf(combo)
-        assertEquals(setOf(NativeKeyEvent.VC_CONTROL, NativeKeyEvent.VC_ALT, 'K'.code), keys)
+        assertEquals(setOf(NativeKeyEvent.VC_CONTROL, NativeKeyEvent.VC_ALT, NativeKeyEvent.VC_K), keys)
 
         val digit = HotkeyCombo.parseOrNull("CTRL+7")!!
-        assertEquals('7'.code, HotkeyService.nativeKeysOf(digit).single { it != NativeKeyEvent.VC_CONTROL })
+        assertEquals(NativeKeyEvent.VC_7, HotkeyService.nativeKeysOf(digit).single { it != NativeKeyEvent.VC_CONTROL })
     }
 
     @Test
@@ -83,7 +84,7 @@ class HotkeyMappingTest {
             HotkeyCombo.SUPPORTED_KEY_NAMES.getValue("J")
         )
         val keys = HotkeyService.nativeKeysOf(combo)
-        assertEquals(setOf(NativeKeyEvent.VC_META, 'J'.code), keys)
+        assertEquals(setOf(NativeKeyEvent.VC_META, NativeKeyEvent.VC_J), keys)
     }
 
     @Test

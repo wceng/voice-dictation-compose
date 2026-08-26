@@ -15,6 +15,7 @@ import com.wceng.dictation.core.model.AppConfig
 import com.wceng.dictation.core.model.ConfigSource
 import com.wceng.dictation.core.model.ConfigUpdate
 import com.wceng.dictation.core.model.HotkeyCombo
+import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.data.repository.ConfigRepository
 import com.wceng.dictation.data.repository.OfflineFirstConfigRepository
 import com.wceng.dictation.data.repository.TranscriptionHistoryRepository
@@ -98,7 +99,17 @@ fun main() {
     // 初始自启动状态(用于托盘/热键注册前同步,仅此处阻塞一次)
     val initialAutostart = runBlocking { koin.get<UiPreferencesRepository>().autostart.first() }
     // 初始全局热键(注册钩子前读取,避免默认值覆盖用户自定义)
-    val initialHotkeys = runBlocking { koin.get<UiPreferencesRepository>().hotkeys.first() }
+    val initialHotkeys: HotkeyConfig = runBlocking {
+        koin.get<UiPreferencesRepository>().hotkeys.first()
+    }.let { base ->
+        // 隐藏调试开关:VD_DEBUG_HOTKEY=<规范串> 可在启动时强制初始热键,
+        // 用于无 GUI 环境验证钩子绑定(如 VD_DEBUG_HOTKEY=CTRL+SHIFT+M)
+        val override = System.getenv("VD_DEBUG_HOTKEY")?.let(HotkeyCombo::parseOrNull)
+        if (override != null) {
+            println("[Main][DBG] 覆盖初始热键为 ${override.canonical()}")
+            HotkeyConfig(override, base.cancel)
+        } else base
+    }
 
     // JNativeHook 原生库随 jar 分发:启动时解压到用户临时目录(永远可写)再加载,
     // 避免安装到 Program Files 后运行时解压到只读的 jar 目录导致启动崩溃。

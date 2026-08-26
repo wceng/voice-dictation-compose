@@ -77,8 +77,11 @@ class HotkeyService(
 
         /**
          * HotkeyCombo(AWT VK 码) -> JNativeHook VC 键集合。
-         * 经 javap 核对:仅字母与数字两套编码数值相同(可透传);
-         * Space/Tab/Backspace/F1–F12/Enter 均不同,必须走显式映射表。
+         *
+         * ⚠️ 两套编码几乎完全不同(VC 是 Set-1 扫描码/HID 体系):
+         * 字母 A=30..Z=54、数字 1=2..0=11、SPACE=57、BACKSPACE=14、TAB=15、
+         * ENTER=28、F1=62..F12=73——白名单内没有任何键可透传,
+         * 全部必须经 [MAIN_KEY_VK_TO_VC] 显式映射(常量引用,勿手抄数值)。
          */
         fun nativeKeysOf(combo: HotkeyCombo): Set<Int> {
             val modifierMap = mapOf(
@@ -87,12 +90,52 @@ class HotkeyService(
                 HotkeyModifier.ALT to NativeKeyEvent.VC_ALT,
                 HotkeyModifier.META to NativeKeyEvent.VC_META
             )
-            return combo.modifiers.map { modifierMap.getValue(it) }.toSet() +
-                (MAIN_KEY_VK_TO_VC[combo.keyCode] ?: combo.keyCode)
+            val mainVc = MAIN_KEY_VK_TO_VC[combo.keyCode]
+                ?: error("未映射的主键 VK=${combo.keyCode},请补全 MAIN_KEY_VK_TO_VC")
+            return combo.modifiers.map { modifierMap.getValue(it) }.toSet() + mainVc
         }
 
-        /** VK 与 VC 数值不同的主键映射;白名单中仅字母/数字可直接透传 */
+        /** VK -> VC 主键全量显式映射;缺失会抛错而非静默失配 */
         private val MAIN_KEY_VK_TO_VC: Map<Int, Int> = mapOf(
+            // 字母(Set-1 扫描码: A=30 .. Z=54)
+            KeyEvent.VK_A to NativeKeyEvent.VC_A,
+            KeyEvent.VK_B to NativeKeyEvent.VC_B,
+            KeyEvent.VK_C to NativeKeyEvent.VC_C,
+            KeyEvent.VK_D to NativeKeyEvent.VC_D,
+            KeyEvent.VK_E to NativeKeyEvent.VC_E,
+            KeyEvent.VK_F to NativeKeyEvent.VC_F,
+            KeyEvent.VK_G to NativeKeyEvent.VC_G,
+            KeyEvent.VK_H to NativeKeyEvent.VC_H,
+            KeyEvent.VK_I to NativeKeyEvent.VC_I,
+            KeyEvent.VK_J to NativeKeyEvent.VC_J,
+            KeyEvent.VK_K to NativeKeyEvent.VC_K,
+            KeyEvent.VK_L to NativeKeyEvent.VC_L,
+            KeyEvent.VK_M to NativeKeyEvent.VC_M,
+            KeyEvent.VK_N to NativeKeyEvent.VC_N,
+            KeyEvent.VK_O to NativeKeyEvent.VC_O,
+            KeyEvent.VK_P to NativeKeyEvent.VC_P,
+            KeyEvent.VK_Q to NativeKeyEvent.VC_Q,
+            KeyEvent.VK_R to NativeKeyEvent.VC_R,
+            KeyEvent.VK_S to NativeKeyEvent.VC_S,
+            KeyEvent.VK_T to NativeKeyEvent.VC_T,
+            KeyEvent.VK_U to NativeKeyEvent.VC_U,
+            KeyEvent.VK_V to NativeKeyEvent.VC_V,
+            KeyEvent.VK_W to NativeKeyEvent.VC_W,
+            KeyEvent.VK_X to NativeKeyEvent.VC_X,
+            KeyEvent.VK_Y to NativeKeyEvent.VC_Y,
+            KeyEvent.VK_Z to NativeKeyEvent.VC_Z,
+            // 数字行(1=2 .. 0=11)
+            KeyEvent.VK_0 to NativeKeyEvent.VC_0,
+            KeyEvent.VK_1 to NativeKeyEvent.VC_1,
+            KeyEvent.VK_2 to NativeKeyEvent.VC_2,
+            KeyEvent.VK_3 to NativeKeyEvent.VC_3,
+            KeyEvent.VK_4 to NativeKeyEvent.VC_4,
+            KeyEvent.VK_5 to NativeKeyEvent.VC_5,
+            KeyEvent.VK_6 to NativeKeyEvent.VC_6,
+            KeyEvent.VK_7 to NativeKeyEvent.VC_7,
+            KeyEvent.VK_8 to NativeKeyEvent.VC_8,
+            KeyEvent.VK_9 to NativeKeyEvent.VC_9,
+            // 其余
             KeyEvent.VK_SPACE to NativeKeyEvent.VC_SPACE,
             KeyEvent.VK_BACK_SPACE to NativeKeyEvent.VC_BACKSPACE,
             KeyEvent.VK_TAB to NativeKeyEvent.VC_TAB,
