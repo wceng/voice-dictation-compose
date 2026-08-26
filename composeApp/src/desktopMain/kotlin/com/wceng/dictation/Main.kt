@@ -102,11 +102,12 @@ fun main() {
     val initialHotkeys: HotkeyConfig = runBlocking {
         koin.get<UiPreferencesRepository>().hotkeys.first()
     }.let { base ->
-        // 隐藏调试开关:VD_DEBUG_HOTKEY=<规范串> 可在启动时强制初始热键,
-        // 用于无 GUI 环境验证钩子绑定(如 VD_DEBUG_HOTKEY=CTRL+SHIFT+M)
+        // 隐藏调试开关:VD_DEBUG_HOTKEY=<规范串> 会「写入存储并立即生效」,
+        // 完整走一遍用户保存路径,用于无 GUI 验证钩子链路
         val override = System.getenv("VD_DEBUG_HOTKEY")?.let(HotkeyCombo::parseOrNull)
         if (override != null) {
-            println("[Main][DBG] 覆盖初始热键为 ${override.canonical()}")
+            println("[Main][DBG] 强制写入热键 ${override.canonical()}")
+            runBlocking { koin.get<UiPreferencesRepository>().setToggleHotkey(override) }
             HotkeyConfig(override, base.cancel)
         } else base
     }
