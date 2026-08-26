@@ -193,11 +193,44 @@ fun main() {
     HotkeyService.register(hotkeyService)
     println("[Main] 快捷键: ${initialHotkeys.toggle.displayText()} 开始/停止并转写 | ${initialHotkeys.cancel.displayText()} 取消录音")
 
+    // 捕获会话与最新配置的 UI 态(供设置页展示与回调读取)
+    val latestConfig = mutableStateOf(initialHotkeys)
+    val capturingSlot = mutableStateOf<String?>(null)
+    val captureStatus = mutableStateOf<Pair<String, Boolean>?>(null)
+
     // 设置页改键即时生效:收集仓库热键流,原子替换钩子绑定
     appScope.launch {
         koin.get<UiPreferencesRepository>().hotkeys.collect { config ->
             hotkeyService.updateBindings(config)
+            latestConfig.value = config
             println("[Main] 热键已更新: ${config.toggle.displayText()} / ${config.cancel.displayText()}")
+        }
+    }
+
+    /** 钩子捕获结果落地:校验→冲突检查→持久化,并回写状态行 */
+    fun applyCaptured(slot: String, combo: HotkeyCombo?) {
+        capturingSlot.value = null
+        when {
+            combo == null -> captureStatus.value = "已取消捕获" to false
+            else -> {
+                val conflicting =
+                    if (slot == "toggle") latestConfig.value.cancel else latestConfig.value.toggle
+                val err = combo.validate()
+                    ?: (combo.takeIf { it == conflicting }?.let { "与另一组热键相同" })
+                when {
+                    err != null -> captureStatus.value = err to true
+                    else -> {
+                        captureStatus.value = "已保存 ${combo.displayText()}" to false
+                        appScope.launch {
+                            runCatching {
+                                val repo = koin.get<UiPreferencesRepository>()
+                                if (slot == "toggle") repo.setToggleHotkey(combo)
+                                else repo.setCancelHotkey(combo)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -220,13 +253,6 @@ fun main() {
         val themeMode = themeRepo.themeMode.collectAsState(initialThemeMode).value
         val autostart = themeRepo.autostart.collectAsState(initialAutostart).value
         val hotkeys = themeRepo.hotkeys.collectAsState(initialHotkeys).value
-
-        // 同步校验热键供捕获框内联提示;合法则启动保存协程并返回 null
-        fun hotkeyErrorOrNull(combo: HotkeyCombo, conflicting: HotkeyCombo?): String? {
-            combo.validate()?.let { return it }
-            if (conflicting != null && combo == conflicting) return "与另一组热键相同"
-            return null
-        }
 
         Window(
             onCloseRequest = { windowVisible.value = false },
@@ -251,6 +277,8 @@ fun main() {
                         themeMode = themeMode,
                         autostart = autostart,
                         hotkeys = hotkeys,
+                        capturingSlot = capturingSlot.value,
+                        captureStatus = captureStatus.value,
                         onToggle = { controller.toggle() },
                         onCancel = { controller.cancelRecording() },
                         onClearHistory = { controller.clearHistory() },
@@ -261,17 +289,17 @@ fun main() {
                         onAutostartChange = { enabled ->
                             appScope.launch { themeRepo.setAutostart(enabled) }
                         },
-                        onSaveToggleHotkey = { combo ->
-                            hotkeyErrorOrNull(combo, hotkeys.cancel) ?: run {
-                                appScope.launch { runCatching { themeRepo.setToggleHotkey(combo) } }
-                                null
-                            }
+                        onStartCapture = { slot ->
+                            captureStatus.value = null
+                            capturingSlot.value = slot
+                            HotkeyService.armOneShot { combo -> applyCaptured(slot, combo) }
                         },
-                        onSaveCancelHotkey = { combo ->
-                            hotkeyErrorOrNull(combo, hotkeys.toggle) ?: run {
-                                appScope.launch { runCatching { themeRepo.setCancelHotkey(combo) } }
-                                null
-                            }
+                        onCancelCapture = { HotkeyService.cancelOneShot() },
+                        onResetHotkey = { slot ->
+                            val defaultCombo =
+                                if (slot == "toggle") HotkeyConfig.DEFAULTS.toggle
+                                else HotkeyConfig.DEFAULTS.cancel
+                            applyCaptured(slot, defaultCombo)
                         }
                     )
                 }

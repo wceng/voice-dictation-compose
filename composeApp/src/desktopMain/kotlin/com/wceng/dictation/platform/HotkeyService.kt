@@ -13,6 +13,14 @@ import java.util.logging.Logger
 /** 一对组合键的 VC 键集合;不可变,整体替换保证可见性与一致性 */
 internal data class HotkeyBindings(val toggleKeys: Set<Int>, val cancelKeys: Set<Int>)
 
+/** VC 修饰键 -> 模型枚举(供从钩子原始键集合反解组合) */
+private val vcModifierMap = mapOf(
+    NativeKeyEvent.VC_CONTROL to HotkeyModifier.CTRL,
+    NativeKeyEvent.VC_SHIFT to HotkeyModifier.SHIFT,
+    NativeKeyEvent.VC_ALT to HotkeyModifier.ALT,
+    NativeKeyEvent.VC_META to HotkeyModifier.META
+)
+
 /**
  * 全局热键服务(JNativeHook)。
  *
@@ -153,6 +161,66 @@ class HotkeyService(
             KeyEvent.VK_F12 to NativeKeyEvent.VC_F12,
             KeyEvent.VK_ENTER to NativeKeyEvent.VC_ENTER
         )
+
+        /** VC -> VK 反查表(由正向映射自动生成,永不失同步) */
+        private val VC_TO_VK: Map<Int, Int> = MAIN_KEY_VK_TO_VC.entries.associate { (k, v) -> v to k }
+
+        /**
+         * 从钩子按住的原始 VC 键集合反解组合;主键不在白名单时返回 null。
+         */
+        fun comboFromHeldKeys(held: Set<Int>): HotkeyCombo? {
+            val modifiers = held.mapNotNull { vcModifierMap[it] }.toSet()
+            val mainVc = held.firstOrNull { it !in vcModifierMap } ?: return null
+            val vk = VC_TO_VK[mainVc] ?: return null
+            return HotkeyCombo(modifiers, vk)
+        }
+
+        /** 主动取消进行中的捕获(等价于按下 Esc)由外部按钮触发 */
+        @Volatile private var activeFinish: ((HotkeyCombo?) -> Unit)? = null
+
+        /**
+         * 单发捕获:武装后下一次「修饰键 + 主键」的物理按键经钩子原样回传。
+         * 相比 Compose 键事件,钩子层拿到的是与触发判定同域的 VC 码,
+         * 天然免疫 IME、焦点竞争与键盘布局差异。ESC 取消,超时返回 null。
+         * 回调经 EDT 派发,可安全触碰 Compose 状态。
+         */
+        fun armOneShot(onDone: (HotkeyCombo?) -> Unit) {
+            val held = mutableSetOf<Int>()
+            var done = false
+            lateinit var listener: NativeKeyListener
+
+            fun finish(result: HotkeyCombo?) {
+                if (done) return
+                done = true
+                activeFinish = null
+                runCatching { GlobalScreen.removeNativeKeyListener(listener) }
+                javax.swing.SwingUtilities.invokeLater { onDone(result) }
+            }
+
+            listener = object : NativeKeyListener {
+                override fun nativeKeyPressed(e: NativeKeyEvent) {
+                    if (done) return
+                    if (e.keyCode == NativeKeyEvent.VC_ESCAPE) return finish(null)
+                    held.add(e.keyCode)
+                    if (held.any { it !in vcModifierMap }) finish(comboFromHeldKeys(held.toSet()))
+                }
+
+                override fun nativeKeyReleased(e: NativeKeyEvent) {}
+            }
+
+            activeFinish = ::finish
+            GlobalScreen.addNativeKeyListener(listener)
+            java.util.Timer("hotkey-capture-timeout", true).schedule(object : java.util.TimerTask() {
+                override fun run() = finish(null)
+            }, CAPTURE_TIMEOUT_MS)
+        }
+
+        /** 主动取消进行中的捕获(等价于按下 Esc),无会话时静默 */
+        fun cancelOneShot() {
+            activeFinish?.invoke(null)
+        }
+
+        private const val CAPTURE_TIMEOUT_MS = 8_000L
 
         /** 屏蔽 JNativeHook 冗余调试日志 */
         private fun quietLogging() {

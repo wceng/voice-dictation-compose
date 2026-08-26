@@ -5,6 +5,7 @@ import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.HotkeyModifier
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
@@ -85,6 +86,24 @@ class HotkeyMappingTest {
         )
         val keys = HotkeyService.nativeKeysOf(combo)
         assertEquals(setOf(NativeKeyEvent.VC_META, NativeKeyEvent.VC_J), keys)
+    }
+
+    @Test
+    fun `comboFromHeldKeys inverse-maps scan codes back to VK model`() {
+        // 钩子实测上报的 M 是 50(Set-1),反解必须还原为模型里的 VK_M=77
+        val held = setOf(NativeKeyEvent.VC_CONTROL, NativeKeyEvent.VC_SHIFT, NativeKeyEvent.VC_M)
+        assertEquals(HotkeyCombo.parseOrNull("CTRL+SHIFT+M"), HotkeyService.comboFromHeldKeys(held))
+
+        val digitZero = setOf(NativeKeyEvent.VC_CONTROL, NativeKeyEvent.VC_ALT, NativeKeyEvent.VC_0)
+        assertEquals(HotkeyCombo.parseOrNull("CTRL+ALT+0"), HotkeyService.comboFromHeldKeys(digitZero))
+    }
+
+    @Test
+    fun `comboFromHeldKeys returns null for unknown main key`() {
+        val unknown = setOf(NativeKeyEvent.VC_CONTROL, 999)
+        assertNull(HotkeyService.comboFromHeldKeys(unknown))
+        // 纯修饰键(无主键)同样无法构成组合
+        assertNull(HotkeyService.comboFromHeldKeys(setOf(NativeKeyEvent.VC_SHIFT)))
     }
 
     @Test

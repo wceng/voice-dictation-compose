@@ -1,9 +1,7 @@
 package com.wceng.dictation.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -31,26 +28,13 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isAltPressed
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isMetaPressed
-import androidx.compose.ui.input.key.isShiftPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -61,7 +45,6 @@ import com.wceng.dictation.core.model.DictationState
 import com.wceng.dictation.core.model.HistoryItem
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
-import com.wceng.dictation.core.model.HotkeyModifier
 import com.wceng.dictation.core.model.ThemeMode
 
 private val statusColor = mapOf(
@@ -90,15 +73,21 @@ fun DictationApp(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     autostart: Boolean = false,
     hotkeys: HotkeyConfig = HotkeyConfig.DEFAULTS,
+    /** 当前处于捕获态的槽位:"toggle" / "cancel",null=无 */
+    capturingSlot: String? = null,
+    /** 捕获相关状态行:(消息, 是否错误);null=隐藏 */
+    captureStatus: Pair<String, Boolean>? = null,
     onToggle: () -> Unit,
     onCancel: () -> Unit,
     onClearHistory: () -> Unit,
     onSaveConfig: (ConfigUpdate) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     onAutostartChange: (Boolean) -> Unit = {},
-    /** 返回 null 表示受理成功;非空为内联展示的错误消息 */
-    onSaveToggleHotkey: (HotkeyCombo) -> String? = { null },
-    onSaveCancelHotkey: (HotkeyCombo) -> String? = { null }
+    /** 开始某槽位的钩子捕获:slot = "toggle" | "cancel" */
+    onStartCapture: (String) -> Unit = {},
+    onCancelCapture: () -> Unit = {},
+    /** 恢复某槽位出厂默认:slot = "toggle" | "cancel" */
+    onResetHotkey: (String) -> Unit = {}
 ) {
     var apiKey by remember(config) { mutableStateOf(config?.apiKey.orEmpty()) }
     var baseUrl by remember(config) { mutableStateOf(config?.baseUrl.orEmpty()) }
@@ -212,18 +201,33 @@ fun DictationApp(
                 }
                 // ===== 全局热键 =====
                 Text("全局热键", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                HotkeyCaptureField(
+                HotkeyRow(
                     label = "开始 / 停止并转写",
+                    slot = "toggle",
                     current = hotkeys.toggle,
-                    defaultCombo = HotkeyConfig.DEFAULTS.toggle,
-                    onSave = onSaveToggleHotkey
+                    capturing = capturingSlot == "toggle",
+                    onStartCapture = onStartCapture,
+                    onCancelCapture = onCancelCapture,
+                    onResetHotkey = onResetHotkey
                 )
-                HotkeyCaptureField(
+                HotkeyRow(
                     label = "取消录音",
+                    slot = "cancel",
                     current = hotkeys.cancel,
-                    defaultCombo = HotkeyConfig.DEFAULTS.cancel,
-                    onSave = onSaveCancelHotkey
+                    capturing = capturingSlot == "cancel",
+                    onStartCapture = onStartCapture,
+                    onCancelCapture = onCancelCapture,
+                    onResetHotkey = onResetHotkey
                 )
+                if (capturingSlot != null || captureStatus != null) {
+                    val (text, isError) = captureStatus
+                        ?: ("请按下新的组合键…(Esc 取消)" to false)
+                    Text(
+                        text,
+                        fontSize = 11.sp,
+                        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                }
                 Button(onClick = {
                     onSaveConfig(
                         ConfigUpdate(
@@ -283,187 +287,47 @@ fun DictationApp(
     }
 }
 
-/** 纯修饰键(按下后还需主键才能构成组合) */
-private val modifierKeys = setOf(
-    Key.CtrlLeft, Key.CtrlRight,
-    Key.ShiftLeft, Key.ShiftRight,
-    Key.AltLeft, Key.AltRight,
-    Key.MetaLeft, Key.MetaRight
-)
-
 /**
- * 可作主键的白名单:Compose [Key] 常量 -> 规范名(与 HotkeyCombo.SUPPORTED_KEY_NAMES 对齐)。
- * 刻意不使用 Key.keyCode 数值——Compose 与 AWT/JNativeHook 的键码体系互不相同,
- * 按常量对象做身份识别、经规范名查表取存储码,从根上消除换算错误。
- */
-private val supportedKeys: Map<Key, String> = buildMap {
-    put(Key.A, "A"); put(Key.B, "B"); put(Key.C, "C"); put(Key.D, "D"); put(Key.E, "E")
-    put(Key.F, "F"); put(Key.G, "G"); put(Key.H, "H"); put(Key.I, "I"); put(Key.J, "J")
-    put(Key.K, "K"); put(Key.L, "L"); put(Key.M, "M"); put(Key.N, "N"); put(Key.O, "O")
-    put(Key.P, "P"); put(Key.Q, "Q"); put(Key.R, "R"); put(Key.S, "S"); put(Key.T, "T")
-    put(Key.U, "U"); put(Key.V, "V"); put(Key.W, "W"); put(Key.X, "X"); put(Key.Y, "Y")
-    put(Key.Z, "Z")
-    put(Key.Zero, "0"); put(Key.One, "1"); put(Key.Two, "2"); put(Key.Three, "3")
-    put(Key.Four, "4"); put(Key.Five, "5"); put(Key.Six, "6"); put(Key.Seven, "7")
-    put(Key.Eight, "8"); put(Key.Nine, "9")
-    put(Key.F1, "F1"); put(Key.F2, "F2"); put(Key.F3, "F3"); put(Key.F4, "F4")
-    put(Key.F5, "F5"); put(Key.F6, "F6"); put(Key.F7, "F7"); put(Key.F8, "F8")
-    put(Key.F9, "F9"); put(Key.F10, "F10"); put(Key.F11, "F11"); put(Key.F12, "F12")
-    put(Key.Spacebar, "SPACE")
-    put(Key.Backspace, "BACKSPACE")
-    put(Key.Enter, "ENTER")
-    put(Key.Tab, "TAB")
-}
-
-/**
- * 全局热键捕获行:展示当前组合 + 「修改」进入捕获态 + 「默认」恢复出厂。
- * 捕获态下整行持有焦点,Esc 取消、失焦自动取消;
- * 保存回调返回 null 视为成功并退出捕获态,非空作为错误消息内联展示。
+ * 全局热键行:展示当前组合 + 「修改」武装钩子捕获 + 「默认」恢复出厂。
+ * 捕获由 JNativeHook 全局钩子单发监听完成(见 HotkeyService.armOneShot),
+ * 不依赖 Compose 焦点与键盘事件,免疫 IME 与布局差异。
  */
 @Composable
-private fun HotkeyCaptureField(
+private fun HotkeyRow(
     label: String,
+    slot: String,
     current: HotkeyCombo,
-    defaultCombo: HotkeyCombo,
-    onSave: (HotkeyCombo) -> String?
+    capturing: Boolean,
+    onStartCapture: (String) -> Unit,
+    onCancelCapture: () -> Unit,
+    onResetHotkey: (String) -> Unit
 ) {
-    var capturing by remember { mutableStateOf(false) }
-    // 本次捕获期间子树是否已实际持有过焦点(防止进入瞬态误判为失焦)
-    var focusSeen by remember { mutableStateOf(false) }
-    // (消息, 是否错误);null 表示无状态行
-    var status by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
-    val focusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(capturing) {
-        if (capturing) {
-            focusSeen = false
-            focusRequester.requestFocus()
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(
-                width = 1.dp,
-                color = if (capturing) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(8.dp)
-            )
-            .focusRequester(focusRequester)
-            .onFocusChanged { state ->
-                // 不能用 isFocused 判断失焦:点击行内按钮后焦点在子孙节点上,
-                // 列会收到瞬时的 isFocused=false,导致刚进捕获态就被取消。
-                // 正确语义:整棵子树彻底无焦点(hasFocus=false)、且本捕获期间
-                // 确实持有过焦点之后,才视为用户主动离开。
-                if (!capturing) return@onFocusChanged
-                if (state.hasFocus) {
-                    focusSeen = true
-                } else if (focusSeen) {
-                    capturing = false
-                    status = null
-                    focusSeen = false
-                }
-            }
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                if (!capturing) return@onPreviewKeyEvent false
-                when (event.type) {
-                    KeyEventType.KeyDown -> {
-                        val key = event.key
-                        when {
-                            key == Key.Escape -> {
-                                capturing = false
-                                status = null
-                                true
-                            }
-                            key in modifierKeys -> {
-                                status = "已捕获修饰键,请再按主键" to false
-                                true
-                            }
-                            else -> {
-                                // 按 Key 常量对象识别主键,经规范名取存储码;
-                                // 不使用 keyCode 数值(Compose 与 AWT 键码体系不同)
-                                val keyName = supportedKeys[key]
-                                when {
-                                    keyName == null -> status = "不支持的按键" to true
-                                    else -> {
-                                        val mods = buildSet {
-                                            if (event.isCtrlPressed) add(HotkeyModifier.CTRL)
-                                            if (event.isShiftPressed) add(HotkeyModifier.SHIFT)
-                                            if (event.isAltPressed) add(HotkeyModifier.ALT)
-                                            if (event.isMetaPressed) add(HotkeyModifier.META)
-                                        }
-                                        val combo = HotkeyCombo(
-                                            mods,
-                                            HotkeyCombo.SUPPORTED_KEY_NAMES.getValue(keyName)
-                                        )
-                                        val structural = combo.validate()
-                                        when {
-                                            structural != null -> status = structural to true
-                                            else -> {
-                                                val err = onSave(combo)
-                                                if (err == null) {
-                                                    capturing = false
-                                                    status = "已保存" to false
-                                                } else {
-                                                    status = err to true
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                true
-                            }
-                        }
-                    }
-                    // 吞掉对应抬起事件,避免泄漏给窗口其他组件
-                    KeyEventType.KeyUp -> true
-                    else -> false
-                }
-            }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (capturing) "请按下新的组合键…" else current.displayText(),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (capturing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+            )
+        }
+        OutlinedButton(
+            onClick = { if (capturing) onCancelCapture() else onStartCapture(slot) },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(current.displayText(), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            }
-            OutlinedButton(
-                onClick = {
-                    if (capturing) {
-                        capturing = false
-                        status = null
-                    } else {
-                        capturing = true
-                        status = null
-                    }
-                },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
-            ) {
-                Text(if (capturing) "取消" else "修改", fontSize = 13.sp)
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "默认",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable {
-                    val err = onSave(defaultCombo)
-                    status = if (err == null) "已恢复默认" to false else err to true
-                    if (err == null) capturing = false
-                }
-            )
+            Text(if (capturing) "取消" else "修改", fontSize = 13.sp)
         }
-        if (capturing || status != null) {
-            val (text, isError) = status ?: ("请按下新的组合键(Esc 取消)" to false)
-            Text(
-                text,
-                fontSize = 11.sp,
-                color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-            )
-        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "默认",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable { onResetHotkey(slot) }
+        )
     }
 }
