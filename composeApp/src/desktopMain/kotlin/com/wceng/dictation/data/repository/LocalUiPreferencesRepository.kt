@@ -3,6 +3,7 @@ package com.wceng.dictation.data.repository
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
+import com.wceng.dictation.core.model.TriggerMode
 import com.wceng.dictation.data.store.DictationPreferencesDataSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -45,6 +46,13 @@ class LocalUiPreferencesRepository(
     override suspend fun setCancelHotkey(combo: HotkeyCombo) {
         combo.validate()?.let { throw IllegalArgumentException(it) }
         dataSource.setHotkeyCancel(combo)
+    }
+
+    override val triggerMode: Flow<TriggerMode> =
+        dataSource.triggerMode.distinctUntilChanged()
+
+    override suspend fun setTriggerMode(mode: TriggerMode) {
+        dataSource.setTriggerMode(mode)
     }
 
     /** 运行时动态判断:是否为 jpackage 安装版(exe 在 Program Files) */

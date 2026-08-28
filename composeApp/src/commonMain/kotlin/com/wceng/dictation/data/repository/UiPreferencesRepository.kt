@@ -3,6 +3,7 @@ package com.wceng.dictation.data.repository
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
+import com.wceng.dictation.core.model.TriggerMode
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -21,4 +22,8 @@ interface UiPreferencesRepository {
     val hotkeys: Flow<HotkeyConfig>
     suspend fun setToggleHotkey(combo: HotkeyCombo)
     suspend fun setCancelHotkey(combo: HotkeyCombo)
+
+    /** 热键触发方式:点按切换 / 长按说话 */
+    val triggerMode: Flow<TriggerMode>
+    suspend fun setTriggerMode(mode: TriggerMode)
 }

@@ -96,3 +96,21 @@ data class HotkeyConfig(
         )
     }
 }
+
+/**
+ * 热键触发方式(使用习惯):
+ * - [CLICK_TOGGLE] 点按切换(默认):按一下组合键开始录音,再按一次停止并转写;
+ * - [HOLD_TO_TALK] 长按说话:按住组合键录音,松开立即停止并转写(push-to-talk)。
+ *
+ * 两种模式只改变全局热键的手势语义;窗口按钮与托盘菜单始终是普通的开始/停止控件。
+ */
+enum class TriggerMode(val raw: String) {
+    CLICK_TOGGLE("click"),
+    HOLD_TO_TALK("hold");
+
+    companion object {
+        /** 宽松解析存储值;空值或非法值回退到 [default](通常为点按切换) */
+        fun fromRawOrDefault(value: String?, default: TriggerMode = CLICK_TOGGLE): TriggerMode =
+            entries.firstOrNull { it.raw == value?.trim()?.lowercase() } ?: default
+    }
+}

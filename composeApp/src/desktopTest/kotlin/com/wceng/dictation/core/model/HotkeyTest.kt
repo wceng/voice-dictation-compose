@@ -97,4 +97,28 @@ class HotkeyTest {
         assertEquals(10, HotkeyCombo.SUPPORTED_KEY_NAMES["ENTER"])   // VK_ENTER
         assertEquals(9, HotkeyCombo.SUPPORTED_KEY_NAMES["TAB"])      // VK_TAB
     }
+
+    // ===== TriggerMode =====
+
+    @Test
+    fun `trigger mode raw round-trips`() {
+        TriggerMode.entries.forEach { mode ->
+            val parsed = TriggerMode.fromRawOrDefault(mode.raw)
+            assertEquals(mode, parsed, "${mode.raw} 应往返解析为自身")
+            // 大小写与首尾空白宽松兼容(与其他偏好同款语义)
+            assertEquals(mode, TriggerMode.fromRawOrDefault(" ${mode.raw.uppercase()} "))
+        }
+    }
+
+    @Test
+    fun `trigger mode falls back to click toggle for unknown values`() {
+        assertEquals(TriggerMode.CLICK_TOGGLE, TriggerMode.fromRawOrDefault(null))
+        assertEquals(TriggerMode.CLICK_TOGGLE, TriggerMode.fromRawOrDefault(""))
+        assertEquals(TriggerMode.CLICK_TOGGLE, TriggerMode.fromRawOrDefault("press_and_hold"))
+        // 显式指定其他默认值时同样生效
+        assertEquals(
+            TriggerMode.HOLD_TO_TALK,
+            TriggerMode.fromRawOrDefault("bogus", default = TriggerMode.HOLD_TO_TALK)
+        )
+    }
 }

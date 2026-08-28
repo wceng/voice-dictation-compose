@@ -16,6 +16,7 @@ import com.wceng.dictation.core.model.ConfigSource
 import com.wceng.dictation.core.model.ConfigUpdate
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
+import com.wceng.dictation.core.model.TriggerMode
 import com.wceng.dictation.data.repository.ConfigRepository
 import com.wceng.dictation.data.repository.OfflineFirstConfigRepository
 import com.wceng.dictation.data.repository.TranscriptionHistoryRepository
@@ -30,6 +31,7 @@ import com.wceng.dictation.platform.TrayManager
 import com.wceng.dictation.ui.DictationApp
 import com.wceng.dictation.ui.theme.DictationTheme
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -111,6 +113,10 @@ fun main() {
             HotkeyConfig(override, base.cancel)
         } else base
     }
+    // 初始触发方式(与初始热键同为注册钩子前的一次性读取)
+    val initialTriggerMode: TriggerMode = runBlocking {
+        koin.get<UiPreferencesRepository>().triggerMode.first()
+    }
 
     // JNativeHook 原生库随 jar 分发:启动时解压到用户临时目录(永远可写)再加载,
     // 避免安装到 Program Files 后运行时解压到只读的 jar 目录导致启动崩溃。
@@ -186,25 +192,33 @@ fun main() {
     }
 
     val hotkeyService = HotkeyService(
-        initialHotkeys,
-        onToggle = { controller.toggle() },
-        onCancel = { controller.cancelRecording() }
+        initialConfig = initialHotkeys,
+        initialMode = initialTriggerMode,
+        onPressed = { controller.toggle() },
+        onReleased = { controller.stopAndTranscribe() },
+        onCancelled = { controller.cancelRecording() }
     )
     HotkeyService.register(hotkeyService)
-    println("[Main] 快捷键: ${initialHotkeys.toggle.displayText()} 开始/停止并转写 | ${initialHotkeys.cancel.displayText()} 取消录音")
+    val triggerHint = when (initialTriggerMode) {
+        TriggerMode.CLICK_TOGGLE -> "${initialHotkeys.toggle.displayText()} 开始/停止并转写"
+        TriggerMode.HOLD_TO_TALK -> "长按 ${initialHotkeys.toggle.displayText()} 说话,松开自动转写"
+    }
+    println("[Main] 快捷键: $triggerHint | ${initialHotkeys.cancel.displayText()} 取消录音")
 
     // 捕获会话与最新配置的 UI 态(供设置页展示与回调读取)
     val latestConfig = mutableStateOf(initialHotkeys)
     val capturingSlot = mutableStateOf<String?>(null)
     val captureStatus = mutableStateOf<Pair<String, Boolean>?>(null)
 
-    // 设置页改键即时生效:收集仓库热键流,原子替换钩子绑定
+    // 设置页改键/换模式即时生效:热键与触发方式成对收集,原子替换钩子绑定
     appScope.launch {
-        koin.get<UiPreferencesRepository>().hotkeys.collect { config ->
-            hotkeyService.updateBindings(config)
-            latestConfig.value = config
-            println("[Main] 热键已更新: ${config.toggle.displayText()} / ${config.cancel.displayText()}")
-        }
+        val repo = koin.get<UiPreferencesRepository>()
+        combine(repo.hotkeys, repo.triggerMode) { config, mode -> config to mode }
+            .collect { (config, mode) ->
+                hotkeyService.updateBindings(config, mode)
+                latestConfig.value = config
+                println("[Main] 热键已更新(${mode.raw}): ${config.toggle.displayText()} / ${config.cancel.displayText()}")
+            }
     }
 
     /** 钩子捕获结果落地:校验→冲突检查→持久化,并回写状态行 */
@@ -253,6 +267,7 @@ fun main() {
         val themeMode = themeRepo.themeMode.collectAsState(initialThemeMode).value
         val autostart = themeRepo.autostart.collectAsState(initialAutostart).value
         val hotkeys = themeRepo.hotkeys.collectAsState(initialHotkeys).value
+        val triggerMode = themeRepo.triggerMode.collectAsState(initialTriggerMode).value
 
         Window(
             onCloseRequest = { windowVisible.value = false },
@@ -277,6 +292,7 @@ fun main() {
                         themeMode = themeMode,
                         autostart = autostart,
                         hotkeys = hotkeys,
+                        triggerMode = triggerMode,
                         capturingSlot = capturingSlot.value,
                         captureStatus = captureStatus.value,
                         onToggle = { controller.toggle() },
@@ -288,6 +304,9 @@ fun main() {
                         },
                         onAutostartChange = { enabled ->
                             appScope.launch { themeRepo.setAutostart(enabled) }
+                        },
+                        onTriggerModeChange = { mode ->
+                            appScope.launch { themeRepo.setTriggerMode(mode) }
                         },
                         onStartCapture = { slot ->
                             captureStatus.value = null

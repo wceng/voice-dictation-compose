@@ -3,6 +3,7 @@ package com.wceng.dictation.data.repository
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
+import com.wceng.dictation.core.model.TriggerMode
 import com.wceng.dictation.data.store.DictationPreferencesDataSource
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -72,5 +73,43 @@ class LocalUiPreferencesHotkeyTest {
         val repo = newRepo("isolation")
         repo.setToggleHotkey(HotkeyCombo.parseOrNull("CTRL+ALT+Z")!!)
         assertEquals(ThemeMode.SYSTEM, repo.themeMode.first())
+    }
+
+    // ===== 触发方式 =====
+
+    @Test
+    fun `trigger mode defaults to click toggle`() = runBlocking {
+        val repo = newRepo("trigger-default")
+        assertEquals(TriggerMode.CLICK_TOGGLE, repo.triggerMode.first())
+    }
+
+    @Test
+    fun `trigger mode persists and round-trips`() = runBlocking {
+        val repo = newRepo("trigger-roundtrip")
+
+        repo.setTriggerMode(TriggerMode.HOLD_TO_TALK)
+        assertEquals(TriggerMode.HOLD_TO_TALK, repo.triggerMode.first())
+
+        // 切回点按同样持久化
+        repo.setTriggerMode(TriggerMode.CLICK_TOGGLE)
+        assertEquals(TriggerMode.CLICK_TOGGLE, repo.triggerMode.first())
+
+        // 热键组合不受触发方式写入影响
+        assertEquals(HotkeyConfig.DEFAULTS.toggle, repo.hotkeys.first().toggle)
+    }
+
+    @Test
+    fun `trigger mode persists across instances`() = runBlocking {
+        val dir = tempDir.resolve("trigger-persist").also { Files.createDirectories(it) }
+        val firstDs = DictationPreferencesDataSource(dir)
+        LocalUiPreferencesRepository(firstDs).setTriggerMode(TriggerMode.HOLD_TO_TALK)
+        firstDs.close()
+
+        val secondDs = DictationPreferencesDataSource(dir)
+        assertEquals(
+            TriggerMode.HOLD_TO_TALK,
+            LocalUiPreferencesRepository(secondDs).triggerMode.first()
+        )
+        secondDs.close()
     }
 }

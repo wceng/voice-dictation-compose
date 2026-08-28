@@ -46,6 +46,7 @@ import com.wceng.dictation.core.model.HistoryItem
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
+import com.wceng.dictation.core.model.TriggerMode
 
 private val statusColor = mapOf(
     DictationState.IDLE to Color(0xFF9E9E9E),
@@ -73,6 +74,8 @@ fun DictationApp(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     autostart: Boolean = false,
     hotkeys: HotkeyConfig = HotkeyConfig.DEFAULTS,
+    /** 热键触发方式:点按切换 / 长按说话 */
+    triggerMode: TriggerMode = TriggerMode.CLICK_TOGGLE,
     /** 当前处于捕获态的槽位:"toggle" / "cancel",null=无 */
     capturingSlot: String? = null,
     /** 捕获相关状态行:(消息, 是否错误);null=隐藏 */
@@ -83,6 +86,8 @@ fun DictationApp(
     onSaveConfig: (ConfigUpdate) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     onAutostartChange: (Boolean) -> Unit = {},
+    /** 切换热键触发方式 */
+    onTriggerModeChange: (TriggerMode) -> Unit = {},
     /** 开始某槽位的钩子捕获:slot = "toggle" | "cancel" */
     onStartCapture: (String) -> Unit = {},
     onCancelCapture: () -> Unit = {},
@@ -133,7 +138,12 @@ fun DictationApp(
             }
         }
         Text(
-            "快捷键: ${hotkeys.toggle.displayText()} 开始/停止 · ${hotkeys.cancel.displayText()} 取消",
+            when (triggerMode) {
+                TriggerMode.CLICK_TOGGLE ->
+                    "快捷键: ${hotkeys.toggle.displayText()} 开始/停止 · ${hotkeys.cancel.displayText()} 取消"
+                TriggerMode.HOLD_TO_TALK ->
+                    "长按 ${hotkeys.toggle.displayText()} 说话，松开自动转写 · ${hotkeys.cancel.displayText()} 取消"
+            },
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -199,6 +209,31 @@ fun DictationApp(
                     Text("开机自启动", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Switch(checked = autostart, onCheckedChange = onAutostartChange)
                 }
+                // ===== 触发方式 =====
+                Text("触发方式", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    val modes = listOf(
+                        TriggerMode.CLICK_TOGGLE to "点按切换",
+                        TriggerMode.HOLD_TO_TALK to "长按说话"
+                    )
+                    modes.forEachIndexed { index, (mode, label) ->
+                        SegmentedButton(
+                            selected = triggerMode == mode,
+                            onClick = { onTriggerModeChange(mode) },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size)
+                        ) {
+                            Text(label, fontSize = 13.sp)
+                        }
+                    }
+                }
+                Text(
+                    if (triggerMode == TriggerMode.HOLD_TO_TALK)
+                        "按住热键说话，松开后立即转写；轻点（不足 300 毫秒）视为误触自动忽略"
+                    else
+                        "按一下热键开始录音，再按一次停止并转写",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 // ===== 全局热键 =====
                 Text("全局热键", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 HotkeyRow(

@@ -9,6 +9,7 @@ import com.wceng.dictation.core.model.HistoryItem
 import com.wceng.dictation.core.model.HotkeyCombo
 import com.wceng.dictation.core.model.HotkeyConfig
 import com.wceng.dictation.core.model.ThemeMode
+import com.wceng.dictation.core.model.TriggerMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -108,6 +109,15 @@ class DictationPreferencesDataSource(
         store.edit { prefs -> prefs[HOTKEY_CANCEL_KEY] = combo.canonical() }
     }
 
+    /** 热键触发方式(点按切换/长按说话);未设置或存储值非法时回退点按切换 */
+    val triggerMode: Flow<TriggerMode> = store.data.map { prefs ->
+        TriggerMode.fromRawOrDefault(prefs[TRIGGER_MODE_KEY])
+    }
+
+    suspend fun setTriggerMode(mode: TriggerMode) {
+        store.edit { prefs -> prefs[TRIGGER_MODE_KEY] = mode.raw }
+    }
+
     suspend fun setHistory(items: List<HistoryItem>) {
         store.edit { prefs ->
             if (items.isEmpty()) prefs.remove(HISTORY_KEY)
@@ -150,10 +160,12 @@ class DictationPreferencesDataSource(
         const val KEY_AUTOSTART = "autostart_enabled"
         const val KEY_HOTKEY_TOGGLE = "hotkey_toggle"
         const val KEY_HOTKEY_CANCEL = "hotkey_cancel"
+        const val KEY_TRIGGER_MODE = "trigger_mode"
         private val THEME_KEY = stringPreferencesKey(KEY_UI_THEME)
         private val AUTOSTART_KEY = stringPreferencesKey(KEY_AUTOSTART)
         private val HOTKEY_TOGGLE_KEY = stringPreferencesKey(KEY_HOTKEY_TOGGLE)
         private val HOTKEY_CANCEL_KEY = stringPreferencesKey(KEY_HOTKEY_CANCEL)
+        private val TRIGGER_MODE_KEY = stringPreferencesKey(KEY_TRIGGER_MODE)
 
         private val HISTORY_KEY = stringPreferencesKey("transcription_history_json")
 
